@@ -5,6 +5,9 @@ Each tab corresponds to a QGIS menu. Within each tab, actions are
 organized into labeled groups with large/small icon buttons.
 """
 
+import re
+
+from qgis.PyQt import sip
 from qgis.PyQt.QtCore import QSize, Qt
 from qgis.PyQt.QtWidgets import (
     QFrame,
@@ -67,6 +70,75 @@ PRIMARY_TOOLBARS = {
     "mDigitizeToolBar",
     "mDataSourceManagerToolBar",
     "mSelectionToolBar",
+}
+
+MENU_POPUP_ACTIONS = {
+    ("mProjectMenu", "New from Template"),
+    ("mProjectMenu", "Open From"),
+    ("mProjectMenu", "Open Recent"),
+    ("mProjectMenu", "Save To"),
+    ("mProjectMenu", "Import/Export"),
+    ("mProjectMenu", "Layouts"),
+    ("mProjectMenu", "Models"),
+    ("mEditMenu", "Paste Features As"),
+    ("mEditMenu", "Select"),
+    ("mEditMenu", "Add Annotation"),
+    ("mEditMenu", "Edit Attributes"),
+    ("mEditMenu", "Edit Geometry"),
+    ("mViewMenu", "3D Map Views"),
+    ("mViewMenu", "Data Filtering"),
+    ("mViewMenu", "Measure"),
+    ("mViewMenu", "Decorations"),
+    ("mViewMenu", "Preview Mode"),
+    ("mViewMenu", "Layer Visibility"),
+    ("mViewMenu", "Panels"),
+    ("mViewMenu", "Toolbars"),
+    ("mLayerMenu", "Create Layer"),
+    ("mLayerMenu", "Add Layer"),
+    ("mLayerMenu", "Filter Attribute Table"),
+    ("mLayerMenu", "mActionAllEdits"),
+    ("mSettingsMenu", "User Profiles"),
+    ("mPluginMenu", "Plugin Reloader"),
+    ("mPluginMenu", "QGIS MCP"),
+    ("mPluginMenu", "qt6_compat"),
+    ("mPluginMenu", "Ribbon Toolbar"),
+    ("mRasterMenu", "Analysis"),
+    ("mRasterMenu", "Projections"),
+    ("mRasterMenu", "Miscellaneous"),
+    ("mRasterMenu", "Extraction"),
+    ("mRasterMenu", "Conversion"),
+    ("mVectorMenu", "Analysis Tools"),
+    ("mVectorMenu", "Geoprocessing Tools"),
+    ("mVectorMenu", "Geometry Tools"),
+    ("mVectorMenu", "Research Tools"),
+    ("mVectorMenu", "Data Management Tools"),
+    ("mHelpMenu", "Plugins"),
+}
+
+TOOLBAR_POPUP_ACTIONS = {
+    ("mDigitizeToolBar", "mActionAllEdits"),
+    ("mSnappingToolBar", "EnableTracingAction"),
+}
+
+WIDGET_POPUP_BUTTONS = {
+    ("mAnnotationsToolBar", "mActionCreateAnnotationLayer"),
+    ("mAttributesToolBar", "mActionFeatureAction"),
+    ("mDigitizeToolBar", "mActionDigitizeWithSegment"),
+    ("mGpsToolBar", "Set destination layer for GPS digitized features"),
+    ("mGpsToolBar", "Settings"),
+    ("mMeshToolBar", "Digitize Mesh Elements"),
+    ("mMeshToolBar", "Force by Selected Geometries"),
+    ("mPluginToolBar", "PluginReloader_ReloadRecentPlugin"),
+    ("mShapeDigitizeToolBar", "Circle from 2 points"),
+    ("mShapeDigitizeToolBar", "Ellipse from center and 2 points"),
+    ("mShapeDigitizeToolBar", "Rectangle from center and a point"),
+    ("mShapeDigitizeToolBar", "Regular polygon from 2 points"),
+    ("mSnappingToolBar", "All Layers"),
+    ("mSnappingToolBar", "Allow Overlap"),
+    ("mSnappingToolBar", "Edit advanced configuration"),
+    ("mSnappingToolBar", "Vertex"),
+    ("processingToolbar", "Models"),
+    ("processingToolbar", "Scripts"),
 }
 
 RIBBON_STYLESHEET = """
@@ -212,7 +284,13 @@ class RibbonWidget(QTabWidget):
             if tb and tb.actions():
                 is_primary = tb_name in PRIMARY_TOOLBARS
                 title = tb.windowTitle() or tb_name
-                group = self._create_group(title, tb.actions(), large=is_primary)
+                group = self._create_group(
+                    title,
+                    tb.actions(),
+                    large=is_primary,
+                    source_kind="toolbar",
+                    source_name=tb_name,
+                )
                 layout.addWidget(group)
 
         # If this is the Plugins menu tab, also add plugin toolbars
@@ -236,7 +314,11 @@ class RibbonWidget(QTabWidget):
                 name = tb.objectName()
                 if name and name not in mapped_toolbars and tb.actions():
                     group = self._create_group(
-                        tb.windowTitle() or name, tb.actions(), large=False
+                        tb.windowTitle() or name,
+                        tb.actions(),
+                        large=False,
+                        source_kind="toolbar",
+                        source_name=name,
                     )
                     layout.addWidget(group)
 
@@ -244,7 +326,13 @@ class RibbonWidget(QTabWidget):
         menu_actions = [a for a in menu.actions() if not a.isSeparator()]
         if menu_actions:
             clean_title = menu.title().replace("&", "") + " Menu"
-            group = self._create_group(clean_title, menu_actions, large=False)
+            group = self._create_group(
+                clean_title,
+                menu_actions,
+                large=False,
+                source_kind="menu",
+                source_name=menu_name,
+            )
             layout.addWidget(group)
 
         layout.addStretch()
@@ -269,7 +357,13 @@ class RibbonWidget(QTabWidget):
         for tb_name, title in extra_names:
             tb = all_toolbars.get(tb_name)
             if tb and tb.actions():
-                group = self._create_group(title, tb.actions(), large=False)
+                group = self._create_group(
+                    title,
+                    tb.actions(),
+                    large=False,
+                    source_kind="toolbar",
+                    source_name=tb_name,
+                )
                 layout.addWidget(group)
                 has_content = True
 
@@ -292,12 +386,18 @@ class RibbonWidget(QTabWidget):
         layout.setSpacing(2)
         for tb in plugin_toolbars:
             title = tb.windowTitle() or tb.objectName()
-            group = self._create_group(title, tb.actions(), large=False)
+            group = self._create_group(
+                title,
+                tb.actions(),
+                large=False,
+                source_kind="toolbar",
+                source_name=tb.objectName(),
+            )
             layout.addWidget(group)
         layout.addStretch()
         return container
 
-    def _create_group(self, title, actions, large=False):
+    def _create_group(self, title, actions, large=False, source_kind=None, source_name=None):
         """Create a ribbon group: a framed section with buttons and a title."""
         group = QFrame()
         group.setObjectName("ribbonGroup")
@@ -322,11 +422,22 @@ class RibbonWidget(QTabWidget):
                 if isinstance(action, QWidgetAction):
                     dw = action.defaultWidget()
                     if dw is not None:
-                        btn = self._clone_widget_button(dw, large=True)
+                        btn = self._clone_widget_button(
+                            dw,
+                            large=True,
+                            source_name=source_name,
+                            parent=group,
+                        )
                         if btn is not None:
                             btn_layout.addWidget(btn)
                     continue
-                btn = self._make_button(action, large=True)
+                btn = self._make_button(
+                    action,
+                    large=True,
+                    source_kind=source_kind,
+                    source_name=source_name,
+                    parent=group,
+                )
                 btn_layout.addWidget(btn)
             main_layout.addLayout(btn_layout)
         else:
@@ -345,7 +456,12 @@ class RibbonWidget(QTabWidget):
                 if isinstance(action, QWidgetAction):
                     dw = action.defaultWidget()
                     if dw is not None:
-                        btn = self._clone_widget_button(dw, large=False)
+                        btn = self._clone_widget_button(
+                            dw,
+                            large=False,
+                            source_name=source_name,
+                            parent=group,
+                        )
                         if btn is not None:
                             grid.addWidget(btn, row, col)
                             row += 1
@@ -353,7 +469,13 @@ class RibbonWidget(QTabWidget):
                                 row = 0
                                 col += 1
                     continue
-                btn = self._make_button(action, large=False)
+                btn = self._make_button(
+                    action,
+                    large=False,
+                    source_kind=source_kind,
+                    source_name=source_name,
+                    parent=group,
+                )
                 grid.addWidget(btn, row, col)
                 row += 1
                 if row >= 3:
@@ -369,16 +491,45 @@ class RibbonWidget(QTabWidget):
 
         return group
 
-    def _clone_widget_button(self, source, large=False):
+    def _clean_text(self, text):
+        return re.sub(r"<[^>]+>", "", (text or "").replace("&", "")).strip()
+
+    def _action_popup_id(self, action):
+        return action.objectName() or self._clean_text(action.text())
+
+    def _widget_popup_id(self, source):
+        default_action = source.defaultAction()
+        if default_action and default_action.objectName():
+            return default_action.objectName()
+        if default_action and self._clean_text(default_action.text()):
+            return self._clean_text(default_action.text())
+        if self._clean_text(source.text()):
+            return self._clean_text(source.text())
+        if self._clean_text(source.toolTip()):
+            return self._clean_text(source.toolTip())
+        return ""
+
+    def _is_popup_action(self, source_kind, source_name, action):
+        action_key = (source_name, self._action_popup_id(action))
+        if source_kind == "menu":
+            return action_key in MENU_POPUP_ACTIONS
+        if source_kind == "toolbar":
+            return action_key in TOOLBAR_POPUP_ACTIONS
+        return False
+
+    def _is_popup_widget_button(self, source_name, source):
+        return (source_name, self._widget_popup_id(source)) in WIDGET_POPUP_BUTTONS
+
+    def _clone_widget_button(self, source, large=False, source_name=None, parent=None):
         """Clone a QToolButton from a QWidgetAction's defaultWidget.
         Returns None for non-QToolButton widgets (spinboxes, etc.)."""
         if not isinstance(source, QToolButton):
             return None
-        clone = QToolButton()
+        clone = QToolButton(parent)
         clone.setIcon(source.icon())
         clone.setToolTip(source.toolTip())
         clone.setAutoRaise(True)
-        if source.menu():
+        if self._is_popup_widget_button(source_name, source):
             clone.setMenu(source.menu())
             clone.setPopupMode(source.popupMode())
         # Wire click through to the hidden original so all internal logic fires
@@ -396,11 +547,44 @@ class RibbonWidget(QTabWidget):
             clone.setFixedHeight(22)
         return clone
 
-    def _make_button(self, action, large=False):
+    def _sync_menu_button(self, button, action):
+        """Keep a popup-only menu button aligned with its source action."""
+        if sip.isdeleted(button):
+            return
+        button.setText(self._clean_text(action.text()))
+        button.setIcon(action.icon())
+        button.setToolTip(self._clean_text(action.toolTip()) or self._clean_text(action.text()))
+        button.setStatusTip(action.statusTip())
+        button.setEnabled(action.isEnabled())
+        button.setVisible(action.isVisible())
+
+    def _sync_popup_menu(self, popup_menu, source_menu):
+        """Mirror the current actions from a source menu into a detached popup."""
+        popup_menu.clear()
+        popup_menu.addActions(source_menu.actions())
+
+    def _make_button(self, action, large=False, source_kind=None, source_name=None, parent=None):
         """Create a QToolButton for a ribbon action."""
-        btn = QToolButton()
-        btn.setDefaultAction(action)
+        btn = QToolButton(parent)
         btn.setAutoRaise(True)
+
+        if self._is_popup_action(source_kind, source_name, action):
+            source_menu = action.menu()
+            self._sync_menu_button(btn, action)
+            popup_menu = QMenu(btn)
+            self._sync_popup_menu(popup_menu, source_menu)
+            popup_menu.aboutToShow.connect(
+                lambda popup_menu=popup_menu, action=action: self._sync_popup_menu(
+                    popup_menu, action.menu()
+                )
+            )
+            btn.setMenu(popup_menu)
+            btn.setPopupMode(QToolButton.InstantPopup)
+            action.changed.connect(
+                lambda btn=btn, action=action: self._sync_menu_button(btn, action)
+            )
+        else:
+            btn.setDefaultAction(action)
 
         if large:
             btn.setIconSize(QSize(28, 28))
@@ -415,10 +599,5 @@ class RibbonWidget(QTabWidget):
                 btn.setMaximumWidth(120)
             btn.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
             btn.setFixedHeight(22)
-
-        # If the action has a sub-menu, show a dropdown arrow
-        if action.menu():
-            btn.setMenu(action.menu())
-            btn.setPopupMode(QToolButton.MenuButtonPopup)
 
         return btn
