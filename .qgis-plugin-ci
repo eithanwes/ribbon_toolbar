@@ -1,0 +1,5 @@
+plugin_path: ribbon_toolbar
+github_organization_slug: eithanwes
+project_slug: ribbon_toolbar
+changelog_regexp: \*\*unreleased\*\*
+changelog_include_tag_name: true
