@@ -36,10 +36,11 @@ class RibbonToolbarPlugin:
         # Toggle action
         self.toggle_action = QAction(icon, "Toggle Ribbon Toolbar", self.main_window)
         self.toggle_action.setCheckable(True)
-        self.toggle_action.setChecked(False)
+        self.toggle_action.setChecked(True)
         self.toggle_action.triggered.connect(self._on_toggle)
         self.iface.addToolBarIcon(self.toggle_action)
         self.iface.addPluginToMenu("&Ribbon Toolbar", self.toggle_action)
+        self._on_toggle(True)  # Activate ribbon by default
 
     def unload(self):
         """Called when plugin is unloaded."""
