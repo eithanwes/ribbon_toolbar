@@ -6,6 +6,7 @@ Handles plugin lifecycle and toggling between ribbon and classic UI.
 
 from pathlib import Path
 
+from qgis.core import Qgis, QgsMessageLog
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QToolBar
@@ -64,8 +65,17 @@ class RibbonToolbarPlugin:
         self._original_menubar_visible = self.main_window.menuBar().isVisible()
         self._original_toolbar_visibility = {}
         for tb in self.main_window.findChildren(QToolBar):
-            if tb.objectName() != self.RIBBON_OBJECT_NAME:
+            if (
+                tb.objectName() != self.RIBBON_OBJECT_NAME
+                and tb.parent() == self.main_window
+            ):
                 self._original_toolbar_visibility[tb.objectName()] = tb.isVisible()
+
+        QgsMessageLog.logMessage(
+            str(self._original_toolbar_visibility).replace(",", ",\n"),
+            "Ribbon Toolbar",
+            level=Qgis.Info,
+        )
 
         # Build the ribbon
         from .ribbon_widget import RibbonWidget
@@ -83,11 +93,13 @@ class RibbonToolbarPlugin:
         self.ribbon_toolbar.addWidget(self.ribbon_widget)
         self.main_window.addToolBar(Qt.TopToolBarArea, self.ribbon_toolbar)
 
-        # Hide all existing toolbars and menubar
+        # Hide toolbars docked to the main window only (not toolbars inside panels)
         for tb in self.main_window.findChildren(QToolBar):
-            if tb.objectName() != self.RIBBON_OBJECT_NAME:
+            if (
+                tb.objectName() != self.RIBBON_OBJECT_NAME
+                and tb.parent() == self.main_window
+            ):
                 tb.setVisible(False)
-        self.main_window.menuBar().setVisible(False)
 
         self.ribbon_active = True
 
@@ -104,10 +116,12 @@ class RibbonToolbarPlugin:
             self.ribbon_widget = None
 
         # Restore menubar
-        self.main_window.menuBar().setVisible(self._original_menubar_visible)
+        self.main_window.menuBar().setVisible(True)
 
         # Restore toolbars
         for tb in self.main_window.findChildren(QToolBar):
+            if tb.parent() != self.main_window:
+                continue
             name = tb.objectName()
             if name in self._original_toolbar_visibility:
                 tb.setVisible(self._original_toolbar_visibility[name])
