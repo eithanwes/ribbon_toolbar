@@ -30,7 +30,7 @@ class RibbonToolbarPlugin:
 
     def initGui(self):
         """Called when plugin is loaded."""
-        icon_path = self.plugin_dir / "icon.png"
+        icon_path = self.plugin_dir / "icon.svg"
         icon = QIcon(str(icon_path)) if icon_path.exists() else QIcon()
 
         # Toggle action
