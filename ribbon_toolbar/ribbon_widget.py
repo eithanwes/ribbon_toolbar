@@ -50,6 +50,7 @@ MENU_TOOLBAR_MAP = {
 TAB_ORDER = [
     "mProjectMenu",
     "mEditMenu",
+    "mSelectionMenu",  # Special virtual menu for Selection actions
     "mViewMenu",
     "mLayerMenu",
     "mSettingsMenu",
@@ -64,12 +65,18 @@ TAB_ORDER = [
 ]
 
 # Toolbar groups that count as "primary" (get large icons)
-PRIMARY_TOOLBARS = {
+LARGE_ICONS = {
     "mFileToolBar",
     "mMapNavToolBar",
     "mDigitizeToolBar",
     "mDataSourceManagerToolBar",
     "mSelectionToolBar",
+    "mSettingsMenu",
+    "processingToolbar",
+    "processing",
+    "mPluginMenu",
+    "mPluginToolBar",
+    "mSelectionMenu",
 }
 
 MENU_POPUP_ACTIONS = {
@@ -81,7 +88,6 @@ MENU_POPUP_ACTIONS = {
     ("mProjectMenu", "Layouts"),
     ("mProjectMenu", "Models"),
     ("mEditMenu", "Paste Features As"),
-    ("mEditMenu", "Select"),
     ("mEditMenu", "Add Annotation"),
     ("mEditMenu", "Edit Attributes"),
     ("mEditMenu", "Edit Geometry"),
@@ -243,6 +249,19 @@ class RibbonWidget(QTabWidget):
 
         # Build tabs in order
         for menu_name in TAB_ORDER:
+            # Special handling for virtual Selection menu
+            if menu_name == "mSelectionMenu":
+                # Extract the Select submenu from Edit menu
+                edit_menu = menus_by_name.get("mEditMenu")
+                if edit_menu:
+                    for action in edit_menu.actions():
+                        if not action.isSeparator() and self._clean_text(action.text()) == "Select":
+                            if action.menu():
+                                tab = self._build_selection_tab(action.menu())
+                                self.addTab(tab, "Selection")
+                                break
+                continue
+            
             menu = menus_by_name.get(menu_name)
             if menu is None:
                 continue
@@ -277,12 +296,18 @@ class RibbonWidget(QTabWidget):
         layout.setContentsMargins(4, 2, 4, 2)
         layout.setSpacing(2)
 
+        # Track action identities so menu groups never duplicate toolbar actions.
+        # QGIS shares the same QAction object between toolbars and menus, so
+        # id() comparison reliably detects the same action appearing in both.
+        seen_ids = set()
+        empty_toolbar_action_ids = set()  # Track toolbar actions with no text
+
         # Add toolbar-based groups first
         related_toolbars = MENU_TOOLBAR_MAP.get(menu_name, [])
         for tb_name in related_toolbars:
             tb = all_toolbars.get(tb_name)
             if tb and tb.actions():
-                is_primary = tb_name in PRIMARY_TOOLBARS
+                is_primary = tb_name in LARGE_ICONS
                 title = tb.windowTitle() or tb_name
                 group = self._create_group(
                     title,
@@ -292,6 +317,13 @@ class RibbonWidget(QTabWidget):
                     source_name=tb_name,
                 )
                 layout.addWidget(group)
+                for a in tb.actions():
+                    if not a.isSeparator():
+                        action_id = id(a)
+                        seen_ids.add(action_id)
+                        # Track if this action has no text
+                        if not self._clean_text(a.text()):
+                            empty_toolbar_action_ids.add(action_id)
 
         # If this is the Plugins menu tab, also add plugin toolbars
         if menu_name == "mPluginMenu":
@@ -321,15 +353,25 @@ class RibbonWidget(QTabWidget):
                         source_name=name,
                     )
                     layout.addWidget(group)
+                    for a in tb.actions():
+                        if not a.isSeparator():
+                            seen_ids.add(id(a))
 
-        # Add menu actions as a group
-        menu_actions = [a for a in menu.actions() if not a.isSeparator()]
+        # Add menu actions as a group, but skip any action already shown via
+        # a toolbar group above — those are the same QAction object in QGIS.
+        # Exception: if a shared action is empty in the toolbar but has text in
+        # the menu, include the menu version (e.g., "Manage and Install Plugins").
+        menu_actions = [
+            a for a in menu.actions()
+            if not a.isSeparator()
+            and (id(a) not in seen_ids or id(a) in empty_toolbar_action_ids)
+        ]
         if menu_actions:
             clean_title = menu.title().replace("&", "") + " Menu"
             group = self._create_group(
                 clean_title,
                 menu_actions,
-                large=False,
+                large=menu_name in LARGE_ICONS,
                 source_kind="menu",
                 source_name=menu_name,
             )
@@ -357,10 +399,11 @@ class RibbonWidget(QTabWidget):
         for tb_name, title in extra_names:
             tb = all_toolbars.get(tb_name)
             if tb and tb.actions():
+                is_primary = tb_name in LARGE_ICONS
                 group = self._create_group(
                     title,
                     tb.actions(),
-                    large=False,
+                    large=is_primary,
                     source_kind="toolbar",
                     source_name=tb_name,
                 )
@@ -397,7 +440,35 @@ class RibbonWidget(QTabWidget):
         layout.addStretch()
         return container
 
-    def _create_group(self, title, actions, large=False, source_kind=None, source_name=None):
+    def _build_selection_tab(self, selection_menu):
+        """Build the Selection tab from the Edit > Select submenu."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(2)
+
+        # Create a single group with all selection actions
+        group = self._create_group(
+            "Selection",
+            selection_menu.actions(),
+            large=True,
+            source_kind="menu",
+            source_name="mSelectionMenu",
+        )
+        layout.addWidget(group)
+        layout.addStretch()
+        scroll.setWidget(container)
+        return scroll
+
+    def _create_group(
+        self, title, actions, large=False, source_kind=None, source_name=None
+    ):
         """Create a ribbon group: a framed section with buttons and a title."""
         group = QFrame()
         group.setObjectName("ribbonGroup")
@@ -553,7 +624,9 @@ class RibbonWidget(QTabWidget):
             return
         button.setText(self._clean_text(action.text()))
         button.setIcon(action.icon())
-        button.setToolTip(self._clean_text(action.toolTip()) or self._clean_text(action.text()))
+        button.setToolTip(
+            self._clean_text(action.toolTip()) or self._clean_text(action.text())
+        )
         button.setStatusTip(action.statusTip())
         button.setEnabled(action.isEnabled())
         button.setVisible(action.isVisible())
@@ -563,7 +636,9 @@ class RibbonWidget(QTabWidget):
         popup_menu.clear()
         popup_menu.addActions(source_menu.actions())
 
-    def _make_button(self, action, large=False, source_kind=None, source_name=None, parent=None):
+    def _make_button(
+        self, action, large=False, source_kind=None, source_name=None, parent=None
+    ):
         """Create a QToolButton for a ribbon action."""
         btn = QToolButton(parent)
         btn.setAutoRaise(True)
