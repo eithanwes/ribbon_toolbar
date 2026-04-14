@@ -27,3 +27,4 @@ jobs:
           qgis-plugin-ci
           release ${GITHUB_REF_NAME}
           --github-token ${{ secrets.GITHUB_TOKEN }}
+          --qgis-token ${{ secrets.QGIS_PLUGIN_REPO_TOKEN }}

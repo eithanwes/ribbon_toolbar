@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-04-14
+
+- Release directly to QGIS plugin repository
+
 ## [0.4.0] - 2026-04-14
 
 - Keep active toolbars visible when disabling ribbon
@@ -32,7 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - "Tools" tab for snapping, labels, selection and annotation toolbars
 - Plugin toolbars automatically collected under the Plugins tab
 
-[Unreleased]: https://github.com/eithanwes/ribbon_toolbar/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/eithanwes/ribbon_toolbar/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/eithanwes/ribbon_toolbar/compare/v0.4.0...v0.4.2
 [0.4.0]: https://github.com/eithanwes/ribbon_toolbar/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/eithanwes/ribbon_toolbar/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/eithanwes/ribbon_toolbar/compare/v0.1.0...v0.2.0
