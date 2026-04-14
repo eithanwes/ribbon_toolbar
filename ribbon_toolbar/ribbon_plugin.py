@@ -120,7 +120,7 @@ class RibbonToolbarPlugin:
 
         # Restore toolbars
         for tb in self.main_window.findChildren(QToolBar):
-            if tb.parent() != self.main_window:
+            if tb.parent() != self.main_window or tb.isVisible() is True:
                 continue
             name = tb.objectName()
             if name in self._original_toolbar_visibility:
