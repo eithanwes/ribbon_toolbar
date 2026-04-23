@@ -211,19 +211,41 @@ class RibbonWidget(QTabWidget):
     def build_ribbon(self):
         """Populate the ribbon with tabs from QGIS menus and toolbars."""
         menubar = self.main_window.menuBar()
+        all_toolbars = self._collect_all_toolbars()
+        menus_by_name = self._collect_menus_by_name(menubar)
+
+        # Build tabs in order
+        for menu_name in TAB_ORDER:
+            if menu_name == "mSelectionMenu":
+                self._build_selection_menu_tab(menus_by_name)
+                continue
+
+            self._build_standard_menu_tab(menu_name, menus_by_name, all_toolbars)
+
+        # "Extra" tab for additional toolbars (Snapping, Labels, Selection, etc.)
+        extra_tab = self._build_extra_tab(all_toolbars)
+        if extra_tab:
+            self.addTab(extra_tab, "Tools")
+
+    def _collect_all_toolbars(self):
+        """Collect all toolbars from the main window."""
         all_toolbars = {}
         for tb in self.main_window.findChildren(QToolBar):
             name = tb.objectName()
             if name:
                 all_toolbars[name] = tb
+        return all_toolbars
 
-        # Collect top-level menus by objectName
+    def _collect_menus_by_name(self, menubar):
+        """Collect top-level menus by objectName."""
         menus_by_name = {}
         for menu in menubar.findChildren(QMenu):
             if menu.parent() == menubar:
                 menus_by_name[menu.objectName()] = menu
+        return menus_by_name
 
-        # Collect plugin toolbars (toolbars not mapped to any menu)
+    def _get_mapped_toolbars_set(self):
+        """Get the set of all toolbar names that are mapped to menus."""
         mapped_toolbars = set()
         for tb_list in MENU_TOOLBAR_MAP.values():
             mapped_toolbars.update(tb_list)
@@ -241,47 +263,44 @@ class RibbonWidget(QTabWidget):
             "mToolbar",
         }
         mapped_toolbars.update(known_internal)
+        return mapped_toolbars
 
+    def _collect_plugin_toolbars(self, all_toolbars):
+        """Collect toolbars not mapped to any menu."""
+        mapped_toolbars = self._get_mapped_toolbars_set()
         plugin_toolbars = []
         for name, tb in all_toolbars.items():
             if name not in mapped_toolbars and tb.actions():
                 plugin_toolbars.append(tb)
+        return plugin_toolbars
 
-        # Build tabs in order
-        for menu_name in TAB_ORDER:
-            # Special handling for virtual Selection menu
-            if menu_name == "mSelectionMenu":
-                # Extract the Select submenu from Edit menu
-                edit_menu = menus_by_name.get("mEditMenu")
-                if edit_menu:
-                    for action in edit_menu.actions():
-                        if not action.isSeparator() and self._clean_text(action.text()) == "Select":
-                            if action.menu():
-                                tab = self._build_selection_tab(action.menu())
-                                self.addTab(tab, "Selection")
-                                break
+    def _build_selection_menu_tab(self, menus_by_name):
+        """Build the virtual Selection menu tab."""
+        edit_menu = menus_by_name.get("mEditMenu")
+        if not edit_menu:
+            return
+
+        for action in edit_menu.actions():
+            submenu = action.menu()
+            if (
+                action.isSeparator()
+                or self._clean_text(action.text()) != "Select"
+                or not submenu
+            ):
                 continue
-            
-            menu = menus_by_name.get(menu_name)
-            if menu is None:
-                continue
+            tab = self._build_selection_tab(submenu)
+            self.addTab(tab, "Selection")
+            return
 
-            tab = self._build_tab(menu, all_toolbars, menu_name)
-            clean_title = menu.title().replace("&", "")
-            self.addTab(tab, clean_title)
+    def _build_standard_menu_tab(self, menu_name, menus_by_name, all_toolbars):
+        """Build a standard menu tab."""
+        menu = menus_by_name.get(menu_name)
+        if menu is None:
+            return
 
-        # "Extra" tab for additional toolbars (Snapping, Labels, Selection, etc.)
-        extra_tab = self._build_extra_tab(all_toolbars)
-        if extra_tab:
-            self.addTab(extra_tab, "Tools")
-
-        # "Plugins" tab additions — append plugin toolbars
-        if plugin_toolbars:
-            plugins_extra = self._build_plugins_extra_tab(plugin_toolbars)
-            if plugins_extra:
-                # We already added a Plugins tab from the menu;
-                # find it and add groups
-                pass  # handled in _build_tab for mPluginMenu
+        tab = self._build_tab(menu, all_toolbars, menu_name)
+        clean_title = menu.title().replace("&", "")
+        self.addTab(tab, clean_title)
 
     def _build_tab(self, menu, all_toolbars, menu_name):
         """Build a single ribbon tab for a QGIS menu."""
@@ -296,73 +315,95 @@ class RibbonWidget(QTabWidget):
         layout.setContentsMargins(4, 2, 4, 2)
         layout.setSpacing(2)
 
-        # Track action identities so menu groups never duplicate toolbar actions.
-        # QGIS shares the same QAction object between toolbars and menus, so
-        # id() comparison reliably detects the same action appearing in both.
+        # Track action identities and toolbar-only actions
         seen_ids = set()
-        empty_toolbar_action_ids = set()  # Track toolbar actions with no text
+        empty_toolbar_action_ids = set()
 
         # Add toolbar-based groups first
-        related_toolbars = MENU_TOOLBAR_MAP.get(menu_name, [])
-        for tb_name in related_toolbars:
-            tb = all_toolbars.get(tb_name)
-            if tb and tb.actions():
-                is_primary = tb_name in LARGE_ICONS
-                title = tb.windowTitle() or tb_name
-                group = self._create_group(
-                    title,
-                    tb.actions(),
-                    large=is_primary,
-                    source_kind="toolbar",
-                    source_name=tb_name,
-                )
-                layout.addWidget(group)
-                for a in tb.actions():
-                    if not a.isSeparator():
-                        action_id = id(a)
-                        seen_ids.add(action_id)
-                        # Track if this action has no text
-                        if not self._clean_text(a.text()):
-                            empty_toolbar_action_ids.add(action_id)
+        self._add_toolbar_groups(
+            layout,
+            menu_name,
+            all_toolbars,
+            seen_ids,
+            empty_toolbar_action_ids,
+        )
 
         # If this is the Plugins menu tab, also add plugin toolbars
         if menu_name == "mPluginMenu":
-            mapped_toolbars = set()
-            for tb_list in MENU_TOOLBAR_MAP.values():
-                mapped_toolbars.update(tb_list)
-            mapped_toolbars.add("RibbonToolbarMain")
-            known_internal = {
-                "mSnappingToolBar",
-                "mLabelToolBar",
-                "mAnnotationsToolBar",
-                "mGpsToolBar",
-                "mBookmarkToolbar",
-                "mBrowserToolbar",
-                "mSelectionToolBar",
-                "mToolbar",
-            }
-            mapped_toolbars.update(known_internal)
-            for tb in self.main_window.findChildren(QToolBar):
-                name = tb.objectName()
-                if name and name not in mapped_toolbars and tb.actions():
-                    group = self._create_group(
-                        tb.windowTitle() or name,
-                        tb.actions(),
-                        large=False,
-                        source_kind="toolbar",
-                        source_name=name,
-                    )
-                    layout.addWidget(group)
-                    for a in tb.actions():
-                        if not a.isSeparator():
-                            seen_ids.add(id(a))
+            self._add_plugin_toolbars_to_tab(layout, seen_ids)
 
-        # Add menu actions as a group, but skip any action already shown via
-        # a toolbar group above — those are the same QAction object in QGIS.
-        # Exception: if a shared action is empty in the toolbar but has text in
-        # the menu, include the menu version (e.g., "Manage and Install Plugins").
+        # Add menu actions as a group
+        self._add_menu_group(
+            layout, menu, menu_name, seen_ids, empty_toolbar_action_ids
+        )
+
+        layout.addStretch()
+        scroll.setWidget(container)
+        return scroll
+
+    def _add_toolbar_groups(
+        self, layout, menu_name, all_toolbars, seen_ids, empty_toolbar_action_ids
+    ):
+        """Add toolbar-based groups to the tab layout."""
+        related_toolbars = MENU_TOOLBAR_MAP.get(menu_name, [])
+        for tb_name in related_toolbars:
+            tb = all_toolbars.get(tb_name)
+            if not tb or not tb.actions():
+                continue
+            is_primary = tb_name in LARGE_ICONS
+            title = tb.windowTitle() or tb_name
+            group = self._create_group(
+                title,
+                tb.actions(),
+                large=is_primary,
+                source_kind="toolbar",
+                source_name=tb_name,
+            )
+            layout.addWidget(group)
+            self._track_toolbar_actions(tb, seen_ids, empty_toolbar_action_ids)
+
+    def _track_toolbar_actions(self, toolbar, seen_ids, empty_toolbar_action_ids):
+        """Track which actions are from toolbars and which have no text."""
+        for a in toolbar.actions():
+            if a.isSeparator():
+                continue
+            action_id = id(a)
+            seen_ids.add(action_id)
+            if not self._clean_text(a.text()):
+                empty_toolbar_action_ids.add(action_id)
+
+    def _add_plugin_toolbars_to_tab(self, layout, seen_ids):
+        """Add plugin toolbars to the Plugins menu tab."""
+        mapped_toolbars = self._get_mapped_toolbars_set()
+        for tb in self.main_window.findChildren(QToolBar):
+            name = tb.objectName()
+            if not name or name in mapped_toolbars or not tb.actions():
+                continue
+            group = self._create_group(
+                tb.windowTitle() or name,
+                tb.actions(),
+                large=False,
+                source_kind="toolbar",
+                source_name=name,
+            )
+            layout.addWidget(group)
+            for a in tb.actions():
+                if a.isSeparator():
+                    continue
+                seen_ids.add(id(a))
+
+    def _add_menu_group(
+        self,
+        layout,
+        menu,
+        menu_name,
+        seen_ids,
+        empty_toolbar_action_ids,
+    ):
+        """Add menu actions as a group, excluding actions already shown by toolbars."""
         menu_actions = [
-            a for a in menu.actions()
+            a
+            for a in menu.actions()
             if not a.isSeparator()
             and (id(a) not in seen_ids or id(a) in empty_toolbar_action_ids)
         ]
@@ -376,10 +417,6 @@ class RibbonWidget(QTabWidget):
                 source_name=menu_name,
             )
             layout.addWidget(group)
-
-        layout.addStretch()
-        scroll.setWidget(container)
-        return scroll
 
     def _build_extra_tab(self, all_toolbars):
         """Build the 'Tools' tab for additional QGIS toolbars."""
@@ -398,17 +435,18 @@ class RibbonWidget(QTabWidget):
         has_content = False
         for tb_name, title in extra_names:
             tb = all_toolbars.get(tb_name)
-            if tb and tb.actions():
-                is_primary = tb_name in LARGE_ICONS
-                group = self._create_group(
-                    title,
-                    tb.actions(),
-                    large=is_primary,
-                    source_kind="toolbar",
-                    source_name=tb_name,
-                )
-                layout.addWidget(group)
-                has_content = True
+            if not tb or not tb.actions():
+                continue
+            is_primary = tb_name in LARGE_ICONS
+            group = self._create_group(
+                title,
+                tb.actions(),
+                large=is_primary,
+                source_kind="toolbar",
+                source_name=tb_name,
+            )
+            layout.addWidget(group)
+            has_content = True
 
         layout.addStretch()
         if has_content:
@@ -479,79 +517,14 @@ class RibbonWidget(QTabWidget):
         main_layout.setSpacing(0)
 
         if large:
-            btn_layout = QHBoxLayout()
-            btn_layout.setSpacing(2)
-            for action in actions:
-                if action.isSeparator():
-                    # Visual separator
-                    sep = QFrame()
-                    sep.setFrameShape(QFrame.VLine)
-                    sep.setFrameShadow(QFrame.Sunken)
-                    sep.setFixedWidth(1)
-                    btn_layout.addWidget(sep)
-                    continue
-                if isinstance(action, QWidgetAction):
-                    dw = action.defaultWidget()
-                    if dw is not None:
-                        btn = self._clone_widget_button(
-                            dw,
-                            large=True,
-                            source_name=source_name,
-                            parent=group,
-                        )
-                        if btn is not None:
-                            btn_layout.addWidget(btn)
-                    continue
-                btn = self._make_button(
-                    action,
-                    large=True,
-                    source_kind=source_kind,
-                    source_name=source_name,
-                    parent=group,
-                )
-                btn_layout.addWidget(btn)
+            btn_layout = self._create_large_button_layout(
+                actions, source_kind, source_name, group
+            )
             main_layout.addLayout(btn_layout)
         else:
-            # Small buttons arranged in a grid (up to 3 rows)
-            grid = QGridLayout()
-            grid.setSpacing(1)
-            grid.setContentsMargins(0, 0, 0, 0)
-            row, col = 0, 0
-            for action in actions:
-                if action.isSeparator():
-                    # Move to next column if we have items
-                    if row > 0:
-                        col += 1
-                        row = 0
-                    continue
-                if isinstance(action, QWidgetAction):
-                    dw = action.defaultWidget()
-                    if dw is not None:
-                        btn = self._clone_widget_button(
-                            dw,
-                            large=False,
-                            source_name=source_name,
-                            parent=group,
-                        )
-                        if btn is not None:
-                            grid.addWidget(btn, row, col)
-                            row += 1
-                            if row >= 3:
-                                row = 0
-                                col += 1
-                    continue
-                btn = self._make_button(
-                    action,
-                    large=False,
-                    source_kind=source_kind,
-                    source_name=source_name,
-                    parent=group,
-                )
-                grid.addWidget(btn, row, col)
-                row += 1
-                if row >= 3:
-                    row = 0
-                    col += 1
+            grid = self._create_small_button_grid(
+                actions, source_kind, source_name, group
+            )
             main_layout.addLayout(grid)
 
         # Group title at bottom
@@ -561,6 +534,110 @@ class RibbonWidget(QTabWidget):
         main_layout.addWidget(title_label)
 
         return group
+
+    def _create_large_button_layout(self, actions, source_kind, source_name, parent):
+        """Create a horizontal layout with large buttons."""
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(2)
+        for action in actions:
+            if action.isSeparator():
+                self._add_separator_to_layout(btn_layout)
+                continue
+            if isinstance(action, QWidgetAction):
+                self._add_widget_action_to_layout(
+                    btn_layout,
+                    action,
+                    large=True,
+                    source_name=source_name,
+                    parent=parent,
+                )
+                continue
+            btn = self._make_button(
+                action,
+                large=True,
+                source_kind=source_kind,
+                source_name=source_name,
+                parent=parent,
+            )
+            btn_layout.addWidget(btn)
+        return btn_layout
+
+    def _create_small_button_grid(self, actions, source_kind, source_name, parent):
+        """Create a grid layout with small buttons (up to 3 rows)."""
+        grid = QGridLayout()
+        grid.setSpacing(1)
+        grid.setContentsMargins(0, 0, 0, 0)
+        row, col = 0, 0
+        for action in actions:
+            if action.isSeparator() and row > 0:
+                col += 1
+                row = 0
+                continue
+            if isinstance(action, QWidgetAction):
+                row, col = self._add_widget_action_to_grid(
+                    grid, action, row, col, source_name=source_name, parent=parent
+                )
+                continue
+            btn = self._make_button(
+                action,
+                large=False,
+                source_kind=source_kind,
+                source_name=source_name,
+                parent=parent,
+            )
+            grid.addWidget(btn, row, col)
+            row += 1
+            if row >= 3:
+                row = 0
+                col += 1
+        return grid
+
+    def _add_separator_to_layout(self, layout):
+        """Add a vertical separator line to a layout."""
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        sep.setFixedWidth(1)
+        layout.addWidget(sep)
+
+    def _add_widget_action_to_layout(
+        self, layout, action, large=False, source_name=None, parent=None
+    ):
+        """Add a widget action button to a horizontal layout."""
+        dw = action.defaultWidget()
+        if dw is None:
+            return
+        btn = self._clone_widget_button(
+            dw,
+            large=large,
+            source_name=source_name,
+            parent=parent,
+        )
+        if btn is None:
+            return
+        layout.addWidget(btn)
+
+    def _add_widget_action_to_grid(
+        self, grid, action, row, col, source_name=None, parent=None
+    ):
+        """Add a widget action button to a grid layout and return updated row/col."""
+        dw = action.defaultWidget()
+        if dw is None:
+            return row, col
+        btn = self._clone_widget_button(
+            dw,
+            large=False,
+            source_name=source_name,
+            parent=parent,
+        )
+        if btn is None:
+            return row, col
+        grid.addWidget(btn, row, col)
+        row += 1
+        if row >= 3:
+            row = 0
+            col += 1
+        return row, col
 
     def _clean_text(self, text):
         return re.sub(r"<[^>]+>", "", (text or "").replace("&", "")).strip()
@@ -582,11 +659,13 @@ class RibbonWidget(QTabWidget):
 
     def _is_popup_action(self, source_kind, source_name, action):
         action_key = (source_name, self._action_popup_id(action))
-        if source_kind == "menu":
-            return action_key in MENU_POPUP_ACTIONS
-        if source_kind == "toolbar":
-            return action_key in TOOLBAR_POPUP_ACTIONS
-        return False
+        popup_actions = {
+            "menu": MENU_POPUP_ACTIONS,
+            "toolbar": TOOLBAR_POPUP_ACTIONS,
+        }.get(source_kind)
+        if not popup_actions:
+            return False
+        return action_key in popup_actions
 
     def _is_popup_widget_button(self, source_name, source):
         return (source_name, self._widget_popup_id(source)) in WIDGET_POPUP_BUTTONS
