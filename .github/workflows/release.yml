@@ -25,6 +25,6 @@ jobs:
       - name: Release plugin
         run: >-
           qgis-plugin-ci
-          release ${GITHUB_REF_NAME}
+          release ${GITHUB_REF_NAME#v}
           --github-token ${{ secrets.GITHUB_TOKEN }}
           --qgis-token ${{ secrets.QGIS_PLUGIN_REPO_TOKEN }}
